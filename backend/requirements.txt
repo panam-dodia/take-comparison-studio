@@ -1,0 +1,6 @@
+genblaze-core
+genblaze-gmicloud
+genblaze-s3
+fastapi
+uvicorn[standard]
+python-dotenv

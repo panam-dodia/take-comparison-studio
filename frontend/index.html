@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Take Comparison Studio</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>Take Comparison Studio</h1>
+    <span id="mode-badge" class="badge">loading…</span>
+  </header>
+
+  <main>
+    <section class="panel">
+      <form id="generate-form">
+        <label>
+          Subject prompt
+          <textarea id="prompt" rows="2" placeholder="A weathered lighthouse keeper, golden hour, cinematic portrait" required></textarea>
+        </label>
+        <label>
+          Motion prompt <span class="hint">(optional — defaults to subject prompt)</span>
+          <textarea id="motion-prompt" rows="2" placeholder="Slow push in, hair moving in the wind"></textarea>
+        </label>
+        <div class="button-row">
+          <button type="button" id="test-reference-btn">Test reference image only (~$0.035)</button>
+          <button type="submit" id="generate-btn">Generate reference + 3 takes (~$2.39)</button>
+        </div>
+      </form>
+      <p id="status-line" class="status"></p>
+
+      <div id="reference-test-panel" class="hidden">
+        <h3>Reference-only test result</h3>
+        <img id="reference-test-image" alt="reference test" />
+        <p class="meta" id="reference-test-meta"></p>
+      </div>
+    </section>
+
+    <section id="result-panel" class="panel hidden">
+      <h2>Reference image</h2>
+      <img id="reference-image" alt="reference" />
+      <p class="meta" id="reference-meta"></p>
+
+      <h2>Takes</h2>
+      <div id="takes-grid" class="takes-grid"></div>
+    </section>
+
+    <section class="panel">
+      <h2>History</h2>
+      <div id="history-list" class="history-list"></div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
