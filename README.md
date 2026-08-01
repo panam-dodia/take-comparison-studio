@@ -35,7 +35,7 @@ Open http://localhost:8000
 
 - Reference image: GMI Cloud `seedream-5.0-lite` ($0.035/image)
 - Video takes: GMI Cloud `Kling-Image2Video-V2.1-Master` ($0.28/sec, 5 or 10s),
-  `seedance-2-0-260128` ($0.07/sec, 4-15s), `veo-3.1-fast-generate-001`
+  `pixverse-v5.6-i2v` ($0.03/sec, 5/8/10s), `veo-3.1-fast-generate-001`
   ($0.15/sec, 4/6/8s)
 
 Verified live against console.gmicloud.ai on 2026-07-27 — see CLAUDE.md for

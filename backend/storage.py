@@ -1,3 +1,6 @@
+import uuid
+
+import boto3
 from genblaze_core import KeyStrategy, ObjectStorageSink
 from genblaze_s3 import S3StorageBackend
 
@@ -32,3 +35,22 @@ def build_sink() -> ObjectStorageSink | None:
         public_url_base=_public_url_base(config.B2_BUCKET, config.B2_REGION),
     )
     return ObjectStorageSink(backend, prefix="takes", key_strategy=KeyStrategy.HIERARCHICAL)
+
+
+def upload_user_reference(data: bytes, filename: str, content_type: str) -> str:
+    """Upload a user-supplied reference image straight to B2 via the raw
+    S3-compatible API — bypasses genblaze's Pipeline/manifest machinery
+    since there's no generation here to record provenance for, just the
+    caller's own file."""
+    if not config.STORAGE_ENABLED:
+        raise RuntimeError("B2 storage is not configured — set B2_KEY_ID/B2_APP_KEY/B2_BUCKET in .env")
+    client = boto3.client(
+        "s3",
+        endpoint_url=f"https://s3.{config.B2_REGION}.backblazeb2.com",
+        aws_access_key_id=config.B2_KEY_ID,
+        aws_secret_access_key=config.B2_APP_KEY,
+        region_name=config.B2_REGION,
+    )
+    key = f"uploads/{uuid.uuid4().hex}-{filename}"
+    client.put_object(Bucket=config.B2_BUCKET, Key=key, Body=data, ContentType=content_type)
+    return f"{_public_url_base(config.B2_BUCKET, config.B2_REGION)}/{key}"

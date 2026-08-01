@@ -30,10 +30,51 @@
       </form>
       <p id="status-line" class="status"></p>
 
+      <div id="progress-panel" class="hidden">
+        <div class="progress-bar-track">
+          <div id="progress-bar-fill" class="progress-bar-fill"></div>
+        </div>
+        <div id="progress-steps" class="progress-steps"></div>
+      </div>
+
       <div id="reference-test-panel" class="hidden">
         <h3>Reference-only test result</h3>
+        <div id="reference-test-progress" class="hidden">
+          <div class="progress-bar-track">
+            <div id="reference-test-progress-fill" class="progress-bar-fill"></div>
+          </div>
+          <div id="reference-test-progress-steps" class="progress-steps"></div>
+        </div>
         <img id="reference-test-image" alt="reference test" />
         <p class="meta" id="reference-test-meta"></p>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Already have a reference image?</h2>
+      <p class="hint">Skip paying for a new reference image — fan out straight to all 3 video models using an image URL you already have (e.g. copy one from History below).</p>
+      <form id="from-reference-form">
+        <label>
+          Upload an image
+          <input type="file" id="existing-reference-file" accept="image/*" />
+        </label>
+        <p class="or-divider">or</p>
+        <label>
+          Paste an image URL <span class="hint">(e.g. copy one from History below)</span>
+          <input type="url" id="existing-reference-url" placeholder="https://..." />
+        </label>
+        <label>
+          Motion prompt
+          <textarea id="existing-motion-prompt" rows="2" placeholder="Slow push in, hair moving in the wind" required></textarea>
+        </label>
+        <button type="submit" id="from-reference-btn">Generate 3 takes from this image (~$2.15)</button>
+      </form>
+      <p id="from-reference-status" class="status"></p>
+      <div id="from-reference-progress" class="hidden">
+        <div class="progress-bar-track">
+          <div id="from-reference-progress-fill" class="progress-bar-fill"></div>
+        </div>
+        <div id="from-reference-progress-steps" class="progress-steps"></div>
       </div>
     </section>
 

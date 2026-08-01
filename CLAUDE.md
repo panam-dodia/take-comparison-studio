@@ -77,16 +77,19 @@ Re-check before the next real run — this catalog rotates.
 |---|---|---|---|---|
 | Reference image | `seedream-5.0-lite` | n/a (image) | $0.035/image | n/a |
 | Kling 2.1 Master | `Kling-Image2Video-V2.1-Master` | yes | $0.28/sec | 5 or 10 sec only |
-| Seedance 2.0 | `seedance-2-0-260128` | yes | $0.07/sec | 4-15 sec |
+| Pixverse v5.6 I2V | `pixverse-v5.6-i2v` | yes | $0.03/sec | 5, 8, or 10 sec |
 | Veo 3.1 Fast | `veo-3.1-fast-generate-001` | yes | $0.15/sec | 4, 6, or 8 sec only |
 
 Findings that changed the code:
 - **`Veo3` was stale.** Google's Veo is now listed under publisher "VertexAI" as `veo-3.1-*-001`/`-preview` variants. `veo-3.1-lite-generate-001` is text-to-video only (no image input) — avoid it. `veo-3.1-fast-generate-001` supports image-to-video and is the cheapest viable option.
+- **`seedance-2-0-260128` is broken on GMI Cloud's own backend right now** — reproducible `Backend error (400)` both through our pipeline and through GMI's own Playground UI with the same image/prompt/params, so it's not a request-formatting issue on our side. Swapped in `wan2.7-r2v` as a replacement.
+- **`wan2.7-r2v` also failed** — generic `Generation failed / Please try again later`, again reproduced in GMI's own Playground (with and without "Enable Prompt Extension"), so also not fixable on our side. Swapped in `pixverse-v5.6-i2v` instead, which succeeded in the Playground.
+- Genblaze's connector maps images to different request slots per model family: Kling/Veo/Pixverse/Wan all use a single `"image"` slot (`route_images(slots=("image",))`), while Seedance splits into `"first_frame"`/`"last_frame"` slots — the multi-slot family was the one that broke, though that's likely coincidental given Wan (single-slot) also failed.
 - Each model has a **different allowed duration set** — there's no single `duration=5` that works for all three. `backend/pipeline.py`'s `VIDEO_MODELS` now carries per-model `params`.
 - Kling's parameter panel has no `aspect_ratio` field (only Text Prompt / Video Length / Negative Prompt / CFG Scale) — don't pass one, the image-to-video output inherits the input image's aspect ratio anyway.
 - `seedream-5.0-lite`'s size parameter is called `Size`, not `aspect_ratio`, with preset values (2K, 3K, specific WxH) — not verified in full, so the reference-image step now omits any size override and takes the model default.
 
-Cost for one full comparison run (reference + all 3 takes at minimum viable duration): $0.035 + $1.40 (Kling 5s) + $0.35 (Seedance 5s) + $0.60 (Veo 4s) ≈ **$2.39** — leaves room for 2+ test runs inside the $5-10 budget.
+Cost for one full comparison run (reference + all 3 takes at minimum viable duration): $0.035 + $1.40 (Kling 5s) + $0.15 (Pixverse 5s) + $0.60 (Veo 4s) ≈ **$2.19**.
 
 ## Storage layout
 `KeyStrategy.HIERARCHICAL` — groups assets by `{prefix}/{run_id}/`, manifest.json alongside each asset.

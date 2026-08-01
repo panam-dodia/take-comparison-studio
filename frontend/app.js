@@ -91,7 +91,8 @@ function renderTake(take, run) {
 function renderResult(run) {
   resultPanel.classList.remove("hidden");
   referenceImage.src = run.reference_url || "";
-  referenceMeta.textContent = `run: ${run.parent_run_id} · prompt: "${run.prompt}"`;
+  const refCost = run.reference_cost_usd != null ? ` · cost: $${run.reference_cost_usd.toFixed(3)}` : "";
+  referenceMeta.textContent = `run: ${run.parent_run_id} · prompt: "${run.prompt}"${refCost}`;
 
   takesGrid.innerHTML = "";
   for (const take of run.takes) {
@@ -121,10 +122,66 @@ async function loadHistory() {
   }
 }
 
+// --- Generic progress bar + job polling, shared by all 3 generate flows ---
+
+function elapsedSeconds(step) {
+  if (!step.started_at) return null;
+  const end = step.completed_at || Date.now() / 1000;
+  return Math.max(0, end - step.started_at);
+}
+
+function renderProgress(progress, fillEl, stepsEl) {
+  const steps = [];
+  if (progress.reference) steps.push({ label: "Reference image", ...progress.reference });
+  for (const take of Object.values(progress.takes || {})) {
+    steps.push({ label: take.label, status: take.status, started_at: take.started_at, completed_at: take.completed_at });
+  }
+
+  const total = steps.length;
+  const done = steps.filter((s) => s.status === "succeeded" || s.status === "failed").length;
+  fillEl.style.width = total ? `${(done / total) * 100}%` : "0%";
+
+  stepsEl.innerHTML = steps
+    .map((s) => {
+      const secs = elapsedSeconds(s);
+      const timeStr = secs != null ? ` (${secs.toFixed(0)}s)` : "";
+      const statusLabel = { pending: "waiting…", processing: "in progress…", succeeded: "done ✓", failed: "failed ✗" }[s.status] || s.status;
+      return `<div class="progress-step ${s.status}"><span>${s.label}</span><span class="step-status">${statusLabel}${timeStr}</span></div>`;
+    })
+    .join("");
+}
+
+// opts: { panelEl, fillEl, stepsEl, statusEl, onDone(result), onError(message) }
+async function pollJob(jobId, opts) {
+  while (true) {
+    const res = await fetch(`/api/jobs/${jobId}`);
+    const job = await res.json();
+    renderProgress(job.progress || {}, opts.fillEl, opts.stepsEl);
+
+    if (job.status === "done") {
+      opts.panelEl.classList.add("hidden");
+      opts.onDone(job.result);
+      return;
+    }
+    if (job.status === "error") {
+      opts.panelEl.classList.add("hidden");
+      opts.statusEl.textContent = `Error: ${job.error}`;
+      opts.onError && opts.onError(job.error);
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+}
+
+// --- Flow 1: reference image only (cheap smoke test) ---
+
 const testReferenceBtn = document.getElementById("test-reference-btn");
 const referenceTestPanel = document.getElementById("reference-test-panel");
 const referenceTestImage = document.getElementById("reference-test-image");
 const referenceTestMeta = document.getElementById("reference-test-meta");
+const referenceTestProgress = document.getElementById("reference-test-progress");
+const referenceTestProgressFill = document.getElementById("reference-test-progress-fill");
+const referenceTestProgressSteps = document.getElementById("reference-test-progress-steps");
 
 testReferenceBtn.addEventListener("click", async () => {
   const prompt = document.getElementById("prompt").value.trim();
@@ -138,6 +195,9 @@ testReferenceBtn.addEventListener("click", async () => {
   referenceTestPanel.classList.remove("hidden");
   referenceTestImage.removeAttribute("src");
   referenceTestMeta.textContent = "";
+  referenceTestProgress.classList.remove("hidden");
+  referenceTestProgressFill.style.width = "0%";
+  referenceTestProgressSteps.innerHTML = "";
 
   try {
     const res = await fetch("/api/test-reference", {
@@ -145,26 +205,43 @@ testReferenceBtn.addEventListener("click", async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ prompt }),
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || "test failed");
-
-    if (data.status === "succeeded" && data.url) {
-      referenceTestImage.src = data.url;
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "test failed");
     }
-    referenceTestMeta.innerHTML = `
-      status: ${data.status}<br/>
-      run: ${data.run_id}<br/>
-      ${data.cost_usd != null ? `cost: $${data.cost_usd.toFixed(3)}<br/>` : ""}
-      ${data.manifest_uri ? `manifest: <a href="${data.manifest_uri}" target="_blank">${data.manifest_uri}</a><br/>` : ""}
-      ${data.error ? `<span style="color:#ff6b6b">${data.error}</span>` : ""}
-    `;
-    statusLine.textContent = "Reference-only test done.";
+    const { job_id } = await res.json();
+    await pollJob(job_id, {
+      panelEl: referenceTestProgress,
+      fillEl: referenceTestProgressFill,
+      stepsEl: referenceTestProgressSteps,
+      statusEl: statusLine,
+      onDone: (data) => {
+        if (data.status === "succeeded" && data.url) {
+          referenceTestImage.src = data.url;
+        }
+        referenceTestMeta.innerHTML = `
+          status: ${data.status}<br/>
+          run: ${data.run_id}<br/>
+          ${data.cost_usd != null ? `cost: $${data.cost_usd.toFixed(3)}<br/>` : ""}
+          ${data.manifest_uri ? `manifest: <a href="${data.manifest_uri}" target="_blank">${data.manifest_uri}</a><br/>` : ""}
+          ${data.error ? `<span style="color:#ff6b6b">${data.error}</span>` : ""}
+        `;
+        statusLine.textContent = "Reference-only test done.";
+      },
+    });
   } catch (err) {
     statusLine.textContent = `Error: ${err.message}`;
+    referenceTestProgress.classList.add("hidden");
   } finally {
     testReferenceBtn.disabled = false;
   }
 });
+
+// --- Flow 2: full generate (reference + 3 takes) ---
+
+const progressPanel = document.getElementById("progress-panel");
+const progressBarFill = document.getElementById("progress-bar-fill");
+const progressSteps = document.getElementById("progress-steps");
 
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -173,7 +250,10 @@ form.addEventListener("submit", async (e) => {
   if (!prompt) return;
 
   generateBtn.disabled = true;
-  statusLine.textContent = "Generating reference image, then fanning out to 3 video models… this can take a while in live mode.";
+  statusLine.textContent = "Starting generation — timing varies a lot per model (seconds to several minutes).";
+  progressPanel.classList.remove("hidden");
+  progressBarFill.style.width = "0%";
+  progressSteps.innerHTML = "";
 
   try {
     const res = await fetch("/api/generate", {
@@ -185,14 +265,92 @@ form.addEventListener("submit", async (e) => {
       const err = await res.json();
       throw new Error(err.detail || "generation failed");
     }
-    const run = await res.json();
-    renderResult(run);
-    await loadHistory();
-    statusLine.textContent = "Done.";
+    const { job_id } = await res.json();
+    await pollJob(job_id, {
+      panelEl: progressPanel,
+      fillEl: progressBarFill,
+      stepsEl: progressSteps,
+      statusEl: statusLine,
+      onDone: async (result) => {
+        renderResult(result);
+        await loadHistory();
+        statusLine.textContent = "Done.";
+      },
+    });
   } catch (err) {
     statusLine.textContent = `Error: ${err.message}`;
+    progressPanel.classList.add("hidden");
   } finally {
     generateBtn.disabled = false;
+  }
+});
+
+// --- Flow 3: fan out to 3 takes using an existing reference image ---
+
+const fromReferenceForm = document.getElementById("from-reference-form");
+const fromReferenceBtn = document.getElementById("from-reference-btn");
+const fromReferenceStatus = document.getElementById("from-reference-status");
+const fromReferenceProgress = document.getElementById("from-reference-progress");
+const fromReferenceProgressFill = document.getElementById("from-reference-progress-fill");
+const fromReferenceProgressSteps = document.getElementById("from-reference-progress-steps");
+
+fromReferenceForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const fileInput = document.getElementById("existing-reference-file");
+  const pastedUrl = document.getElementById("existing-reference-url").value.trim();
+  const motionPrompt = document.getElementById("existing-motion-prompt").value.trim();
+  const file = fileInput.files[0];
+
+  if (!file && !pastedUrl) {
+    fromReferenceStatus.textContent = "Upload an image or paste a URL first.";
+    return;
+  }
+  if (!motionPrompt) return;
+
+  fromReferenceBtn.disabled = true;
+  fromReferenceProgress.classList.remove("hidden");
+  fromReferenceProgressFill.style.width = "0%";
+  fromReferenceProgressSteps.innerHTML = "";
+
+  try {
+    let referenceUrl = pastedUrl;
+    if (file) {
+      fromReferenceStatus.textContent = "Uploading image…";
+      const formData = new FormData();
+      formData.append("file", file);
+      const uploadRes = await fetch("/api/upload-reference", { method: "POST", body: formData });
+      const uploadData = await uploadRes.json();
+      if (!uploadRes.ok) throw new Error(uploadData.detail || "upload failed");
+      referenceUrl = uploadData.url;
+    }
+
+    fromReferenceStatus.textContent = "Starting generation — timing varies a lot per model (seconds to several minutes).";
+    const res = await fetch("/api/generate-takes-from-reference", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reference_url: referenceUrl, motion_prompt: motionPrompt }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "generation failed");
+    }
+    const { job_id } = await res.json();
+    await pollJob(job_id, {
+      panelEl: fromReferenceProgress,
+      fillEl: fromReferenceProgressFill,
+      stepsEl: fromReferenceProgressSteps,
+      statusEl: fromReferenceStatus,
+      onDone: async (result) => {
+        renderResult(result);
+        await loadHistory();
+        fromReferenceStatus.textContent = "Done.";
+      },
+    });
+  } catch (err) {
+    fromReferenceStatus.textContent = `Error: ${err.message}`;
+    fromReferenceProgress.classList.add("hidden");
+  } finally {
+    fromReferenceBtn.disabled = false;
   }
 });
 

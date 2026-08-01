@@ -4,3 +4,4 @@ genblaze-s3
 fastapi
 uvicorn[standard]
 python-dotenv
+python-multipart
