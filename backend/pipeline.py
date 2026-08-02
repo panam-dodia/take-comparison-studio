@@ -291,12 +291,22 @@ def retry_take(reference_url: str, reference_run_id: str, model_key: str, motion
     return _run_take(spec, ref_result, ref_asset, motion_prompt, sink)
 
 
-def generate_takes_from_reference(reference_url: str, motion_prompt: str, progress: dict | None = None) -> ComparisonResult:
+def generate_takes_from_reference(
+    reference_url: str,
+    motion_prompt: str,
+    reference_run_id: str | None = None,
+    reference_cost_usd: float | None = None,
+    progress: dict | None = None,
+) -> ComparisonResult:
     """Fan out to all VIDEO_MODELS using a reference image the caller
-    already has — e.g. one from an earlier run, or their own upload — so
-    they don't have to pay for a fresh reference-image generation."""
+    already has, so they don't have to pay for a fresh reference-image
+    generation. Pass reference_run_id/reference_cost_usd when the image
+    came from a real tracked generation (e.g. the "stage the image first"
+    flow) so lineage and cost stay accurate — otherwise a synthetic run id
+    is used, for a genuinely external image with no generation to trace."""
     sink = build_sink()
-    reference_run_id = f"external-{uuid.uuid4().hex[:8]}"
+    if reference_run_id is None:
+        reference_run_id = f"external-{uuid.uuid4().hex[:8]}"
     ref_asset = _external_image_asset(reference_url)
     ref_result = _FakeReferenceResult(reference_run_id)
 
@@ -314,7 +324,7 @@ def generate_takes_from_reference(reference_url: str, motion_prompt: str, progre
         reference_manifest_uri=None,
         prompt=motion_prompt,
         motion_prompt=motion_prompt,
-        reference_cost_usd=0.0,
+        reference_cost_usd=reference_cost_usd if reference_cost_usd is not None else 0.0,
     )
 
     with ThreadPoolExecutor(max_workers=len(VIDEO_MODELS)) as pool:

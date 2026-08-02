@@ -1,24 +1,60 @@
-const form = document.getElementById("generate-form");
-const generateBtn = document.getElementById("generate-btn");
-const statusLine = document.getElementById("status-line");
+const toastContainer = document.getElementById("toast-container");
+
+function showToast(message, type = "info") {
+  const toast = document.createElement("div");
+  toast.className = `toast ${type}`;
+  toast.textContent = message;
+  toastContainer.appendChild(toast);
+  setTimeout(() => toast.remove(), 6000);
+}
+
+// --- Chooser / flow navigation ---
+
+const chooser = document.getElementById("chooser");
+const flowPanels = {
+  existing: document.getElementById("flow-existing"),
+  staged: document.getElementById("flow-staged"),
+  auto: document.getElementById("flow-auto"),
+};
+
+function showChooser() {
+  chooser.classList.remove("hidden");
+  Object.values(flowPanels).forEach((p) => p.classList.add("hidden"));
+}
+
+function showFlow(name) {
+  chooser.classList.add("hidden");
+  Object.entries(flowPanels).forEach(([key, panel]) => {
+    panel.classList.toggle("hidden", key !== name);
+  });
+}
+
+document.querySelectorAll(".option-card").forEach((card) => {
+  card.addEventListener("click", () => showFlow(card.dataset.flow));
+});
+
+document.querySelectorAll("[data-back]").forEach((btn) => {
+  btn.addEventListener("click", showChooser);
+});
+
+// --- History panel (toggled independently of the chooser/flow) ---
+
+const historyToggle = document.getElementById("history-toggle");
+const historyPanel = document.getElementById("history-panel");
+
+historyToggle.addEventListener("click", async () => {
+  const willShow = historyPanel.classList.contains("hidden");
+  historyPanel.classList.toggle("hidden", !willShow);
+  if (willShow) await loadHistory();
+});
+
+// --- Result rendering (shared by all generate flows) ---
+
 const resultPanel = document.getElementById("result-panel");
 const referenceImage = document.getElementById("reference-image");
 const referenceMeta = document.getElementById("reference-meta");
 const takesGrid = document.getElementById("takes-grid");
 const historyList = document.getElementById("history-list");
-const modeBadge = document.getElementById("mode-badge");
-
-async function loadConfig() {
-  const res = await fetch("/api/config");
-  const cfg = await res.json();
-  modeBadge.textContent = cfg.mock_generation
-    ? "mock generation — $0 cost"
-    : "LIVE generation — spends budget";
-  modeBadge.style.color = cfg.mock_generation ? "#3ecf8e" : "#ff6b6b";
-  if (!cfg.storage_enabled) {
-    modeBadge.textContent += " · storage disabled (no B2 creds)";
-  }
-}
 
 function renderTake(take, run) {
   const card = document.createElement("div");
@@ -60,7 +96,7 @@ function renderTake(take, run) {
     retryBtn.addEventListener("click", async () => {
       retryBtn.disabled = true;
       retryBtn.textContent = "Retrying…";
-      statusLine.textContent = `Retrying ${take.label} against the existing reference image…`;
+      showToast(`Retrying ${take.label} against the existing reference image…`);
       try {
         const res = await fetch(`/api/runs/${run.parent_run_id}/retry-take`, {
           method: "POST",
@@ -76,9 +112,9 @@ function renderTake(take, run) {
         if (!res.ok) throw new Error(data.detail || "retry failed");
         renderResult(data);
         await loadHistory();
-        statusLine.textContent = "Retry done.";
+        showToast("Retry done.", "success");
       } catch (err) {
-        statusLine.textContent = `Error: ${err.message}`;
+        showToast(`Error: ${err.message}`, "error");
         retryBtn.disabled = false;
         retryBtn.textContent = "Retry this model only";
       }
@@ -90,6 +126,8 @@ function renderTake(take, run) {
 
 function renderResult(run) {
   resultPanel.classList.remove("hidden");
+  referenceImage.style.visibility = "";
+  referenceImage.onerror = () => { referenceImage.style.visibility = "hidden"; };
   referenceImage.src = run.reference_url || "";
   const refCost = run.reference_cost_usd != null ? ` · cost: $${run.reference_cost_usd.toFixed(3)}` : "";
   referenceMeta.textContent = `run: ${run.parent_run_id} · prompt: "${run.prompt}"${refCost}`;
@@ -113,16 +151,19 @@ async function loadHistory() {
     const item = document.createElement("div");
     item.className = "history-item";
     item.innerHTML = `
-      <img src="${run.reference_url || ""}" />
+      <img src="${run.reference_url || ""}" onerror="this.style.visibility='hidden'" />
       <span class="h-prompt">${run.prompt}</span>
       ${run.favorite_key ? `<span class="h-fav">★ ${run.favorite_key}</span>` : ""}
     `;
-    item.addEventListener("click", () => renderResult(run));
+    item.addEventListener("click", () => {
+      renderResult(run);
+      showToast("Loaded from history.");
+    });
     historyList.appendChild(item);
   }
 }
 
-// --- Generic progress bar + job polling, shared by all 3 generate flows ---
+// --- Generic progress bar + job polling ---
 
 function elapsedSeconds(step) {
   if (!step.started_at) return null;
@@ -151,7 +192,7 @@ function renderProgress(progress, fillEl, stepsEl) {
     .join("");
 }
 
-// opts: { panelEl, fillEl, stepsEl, statusEl, onDone(result), onError(message) }
+// opts: { panelEl, fillEl, stepsEl, onDone(result), onError(message) }
 async function pollJob(jobId, opts) {
   while (true) {
     const res = await fetch(`/api/jobs/${jobId}`);
@@ -165,7 +206,7 @@ async function pollJob(jobId, opts) {
     }
     if (job.status === "error") {
       opts.panelEl.classList.add("hidden");
-      opts.statusEl.textContent = `Error: ${job.error}`;
+      showToast(`Error: ${job.error}`, "error");
       opts.onError && opts.onError(job.error);
       return;
     }
@@ -173,31 +214,102 @@ async function pollJob(jobId, opts) {
   }
 }
 
-// --- Flow 1: reference image only (cheap smoke test) ---
+// --- Flow: I already have an image ---
 
-const testReferenceBtn = document.getElementById("test-reference-btn");
-const referenceTestPanel = document.getElementById("reference-test-panel");
-const referenceTestImage = document.getElementById("reference-test-image");
-const referenceTestMeta = document.getElementById("reference-test-meta");
-const referenceTestProgress = document.getElementById("reference-test-progress");
-const referenceTestProgressFill = document.getElementById("reference-test-progress-fill");
-const referenceTestProgressSteps = document.getElementById("reference-test-progress-steps");
+const fromReferenceForm = document.getElementById("from-reference-form");
+const fromReferenceBtn = document.getElementById("from-reference-btn");
+const progressPanel = document.getElementById("progress-panel");
+const progressBarFill = document.getElementById("progress-bar-fill");
+const progressSteps = document.getElementById("progress-steps");
 
-testReferenceBtn.addEventListener("click", async () => {
-  const prompt = document.getElementById("prompt").value.trim();
+fromReferenceForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const fileInput = document.getElementById("existing-reference-file");
+  const pastedUrl = document.getElementById("existing-reference-url").value.trim();
+  const motionPrompt = document.getElementById("existing-motion-prompt").value.trim();
+  const file = fileInput.files[0];
+
+  if (!file && !pastedUrl) {
+    showToast("Upload an image or paste a URL first.", "error");
+    return;
+  }
+  if (!motionPrompt) return;
+
+  fromReferenceBtn.disabled = true;
+  progressPanel.classList.remove("hidden");
+  progressBarFill.style.width = "0%";
+  progressSteps.innerHTML = "";
+
+  try {
+    let referenceUrl = pastedUrl;
+    if (file) {
+      showToast("Uploading image…");
+      const formData = new FormData();
+      formData.append("file", file);
+      const uploadRes = await fetch("/api/upload-reference", { method: "POST", body: formData });
+      const uploadData = await uploadRes.json();
+      if (!uploadRes.ok) throw new Error(uploadData.detail || "upload failed");
+      referenceUrl = uploadData.url;
+    }
+
+    showToast("Starting generation — timing varies a lot per model (seconds to several minutes).");
+    const res = await fetch("/api/generate-takes-from-reference", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reference_url: referenceUrl, motion_prompt: motionPrompt }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "generation failed");
+    }
+    const { job_id } = await res.json();
+    await pollJob(job_id, {
+      panelEl: progressPanel,
+      fillEl: progressBarFill,
+      stepsEl: progressSteps,
+      onDone: async (result) => {
+        renderResult(result);
+        await loadHistory();
+        showToast("Done.", "success");
+      },
+    });
+  } catch (err) {
+    showToast(`Error: ${err.message}`, "error");
+    progressPanel.classList.add("hidden");
+  } finally {
+    fromReferenceBtn.disabled = false;
+  }
+});
+
+// --- Flow: generate the reference image first, then decide ---
+
+const stagedForm = document.getElementById("staged-reference-form");
+const stagedBtn = document.getElementById("staged-reference-btn");
+const stagedProgress = document.getElementById("staged-progress");
+const stagedProgressFill = document.getElementById("staged-progress-fill");
+const stagedProgressSteps = document.getElementById("staged-progress-steps");
+const stagedReview = document.getElementById("staged-review");
+const stagedReviewImage = document.getElementById("staged-review-image");
+const stagedReviewMeta = document.getElementById("staged-review-meta");
+const stagedRegenerateBtn = document.getElementById("staged-regenerate-btn");
+const stagedContinueBtn = document.getElementById("staged-continue-btn");
+
+let stagedReference = null; // { run_id, url, cost_usd } once a reference image succeeds
+
+async function runStagedReferenceGeneration() {
+  const prompt = document.getElementById("staged-prompt").value.trim();
   if (!prompt) {
-    statusLine.textContent = "Enter a subject prompt first.";
+    showToast("Enter a subject prompt first.", "error");
     return;
   }
 
-  testReferenceBtn.disabled = true;
-  statusLine.textContent = "Calling the real GMI Cloud image API (~$0.035)…";
-  referenceTestPanel.classList.remove("hidden");
-  referenceTestImage.removeAttribute("src");
-  referenceTestMeta.textContent = "";
-  referenceTestProgress.classList.remove("hidden");
-  referenceTestProgressFill.style.width = "0%";
-  referenceTestProgressSteps.innerHTML = "";
+  stagedBtn.disabled = true;
+  stagedRegenerateBtn.disabled = true;
+  stagedReview.classList.add("hidden");
+  stagedProgress.classList.remove("hidden");
+  stagedProgressFill.style.width = "0%";
+  stagedProgressSteps.innerHTML = "";
+  showToast("Generating reference image (~$0.035)…");
 
   try {
     const res = await fetch("/api/test-reference", {
@@ -207,41 +319,90 @@ testReferenceBtn.addEventListener("click", async () => {
     });
     if (!res.ok) {
       const err = await res.json();
-      throw new Error(err.detail || "test failed");
+      throw new Error(err.detail || "generation failed");
     }
     const { job_id } = await res.json();
     await pollJob(job_id, {
-      panelEl: referenceTestProgress,
-      fillEl: referenceTestProgressFill,
-      stepsEl: referenceTestProgressSteps,
-      statusEl: statusLine,
+      panelEl: stagedProgress,
+      fillEl: stagedProgressFill,
+      stepsEl: stagedProgressSteps,
       onDone: (data) => {
-        if (data.status === "succeeded" && data.url) {
-          referenceTestImage.src = data.url;
+        if (data.status !== "succeeded" || !data.url) {
+          showToast(`Reference image failed: ${data.error || "unknown error"}`, "error");
+          return;
         }
-        referenceTestMeta.innerHTML = `
-          status: ${data.status}<br/>
-          run: ${data.run_id}<br/>
-          ${data.cost_usd != null ? `cost: $${data.cost_usd.toFixed(3)}<br/>` : ""}
-          ${data.manifest_uri ? `manifest: <a href="${data.manifest_uri}" target="_blank">${data.manifest_uri}</a><br/>` : ""}
-          ${data.error ? `<span style="color:#ff6b6b">${data.error}</span>` : ""}
-        `;
-        statusLine.textContent = "Reference-only test done.";
+        stagedReference = { run_id: data.run_id, url: data.url, cost_usd: data.cost_usd };
+        stagedReviewImage.src = data.url;
+        stagedReviewMeta.textContent = `run: ${data.run_id}${data.cost_usd != null ? ` · cost: $${data.cost_usd.toFixed(3)}` : ""}`;
+        stagedReview.classList.remove("hidden");
+        showToast("Reference image ready — review it below.", "success");
       },
     });
   } catch (err) {
-    statusLine.textContent = `Error: ${err.message}`;
-    referenceTestProgress.classList.add("hidden");
+    showToast(`Error: ${err.message}`, "error");
+    stagedProgress.classList.add("hidden");
   } finally {
-    testReferenceBtn.disabled = false;
+    stagedBtn.disabled = false;
+    stagedRegenerateBtn.disabled = false;
+  }
+}
+
+stagedForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  runStagedReferenceGeneration();
+});
+
+stagedRegenerateBtn.addEventListener("click", runStagedReferenceGeneration);
+
+stagedContinueBtn.addEventListener("click", async () => {
+  if (!stagedReference) return;
+  const motionPrompt = document.getElementById("staged-motion-prompt").value.trim()
+    || document.getElementById("staged-prompt").value.trim();
+
+  stagedContinueBtn.disabled = true;
+  progressPanel.classList.remove("hidden");
+  progressBarFill.style.width = "0%";
+  progressSteps.innerHTML = "";
+  showToast("Starting video generation — timing varies a lot per model (seconds to several minutes).");
+
+  try {
+    const res = await fetch("/api/generate-takes-from-reference", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        reference_url: stagedReference.url,
+        motion_prompt: motionPrompt,
+        reference_run_id: stagedReference.run_id,
+        reference_cost_usd: stagedReference.cost_usd,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "generation failed");
+    }
+    const { job_id } = await res.json();
+    await pollJob(job_id, {
+      panelEl: progressPanel,
+      fillEl: progressBarFill,
+      stepsEl: progressSteps,
+      onDone: async (result) => {
+        renderResult(result);
+        await loadHistory();
+        showToast("Done.", "success");
+      },
+    });
+  } catch (err) {
+    showToast(`Error: ${err.message}`, "error");
+    progressPanel.classList.add("hidden");
+  } finally {
+    stagedContinueBtn.disabled = false;
   }
 });
 
-// --- Flow 2: full generate (reference + 3 takes) ---
+// --- Flow: generate everything automatically ---
 
-const progressPanel = document.getElementById("progress-panel");
-const progressBarFill = document.getElementById("progress-bar-fill");
-const progressSteps = document.getElementById("progress-steps");
+const form = document.getElementById("generate-form");
+const generateBtn = document.getElementById("generate-btn");
 
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -250,7 +411,7 @@ form.addEventListener("submit", async (e) => {
   if (!prompt) return;
 
   generateBtn.disabled = true;
-  statusLine.textContent = "Starting generation — timing varies a lot per model (seconds to several minutes).";
+  showToast("Starting generation — timing varies a lot per model (seconds to several minutes).");
   progressPanel.classList.remove("hidden");
   progressBarFill.style.width = "0%";
   progressSteps.innerHTML = "";
@@ -270,89 +431,17 @@ form.addEventListener("submit", async (e) => {
       panelEl: progressPanel,
       fillEl: progressBarFill,
       stepsEl: progressSteps,
-      statusEl: statusLine,
       onDone: async (result) => {
         renderResult(result);
         await loadHistory();
-        statusLine.textContent = "Done.";
+        showToast("Done.", "success");
       },
     });
   } catch (err) {
-    statusLine.textContent = `Error: ${err.message}`;
+    showToast(`Error: ${err.message}`, "error");
     progressPanel.classList.add("hidden");
   } finally {
     generateBtn.disabled = false;
   }
 });
 
-// --- Flow 3: fan out to 3 takes using an existing reference image ---
-
-const fromReferenceForm = document.getElementById("from-reference-form");
-const fromReferenceBtn = document.getElementById("from-reference-btn");
-const fromReferenceStatus = document.getElementById("from-reference-status");
-const fromReferenceProgress = document.getElementById("from-reference-progress");
-const fromReferenceProgressFill = document.getElementById("from-reference-progress-fill");
-const fromReferenceProgressSteps = document.getElementById("from-reference-progress-steps");
-
-fromReferenceForm.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const fileInput = document.getElementById("existing-reference-file");
-  const pastedUrl = document.getElementById("existing-reference-url").value.trim();
-  const motionPrompt = document.getElementById("existing-motion-prompt").value.trim();
-  const file = fileInput.files[0];
-
-  if (!file && !pastedUrl) {
-    fromReferenceStatus.textContent = "Upload an image or paste a URL first.";
-    return;
-  }
-  if (!motionPrompt) return;
-
-  fromReferenceBtn.disabled = true;
-  fromReferenceProgress.classList.remove("hidden");
-  fromReferenceProgressFill.style.width = "0%";
-  fromReferenceProgressSteps.innerHTML = "";
-
-  try {
-    let referenceUrl = pastedUrl;
-    if (file) {
-      fromReferenceStatus.textContent = "Uploading image…";
-      const formData = new FormData();
-      formData.append("file", file);
-      const uploadRes = await fetch("/api/upload-reference", { method: "POST", body: formData });
-      const uploadData = await uploadRes.json();
-      if (!uploadRes.ok) throw new Error(uploadData.detail || "upload failed");
-      referenceUrl = uploadData.url;
-    }
-
-    fromReferenceStatus.textContent = "Starting generation — timing varies a lot per model (seconds to several minutes).";
-    const res = await fetch("/api/generate-takes-from-reference", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reference_url: referenceUrl, motion_prompt: motionPrompt }),
-    });
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || "generation failed");
-    }
-    const { job_id } = await res.json();
-    await pollJob(job_id, {
-      panelEl: fromReferenceProgress,
-      fillEl: fromReferenceProgressFill,
-      stepsEl: fromReferenceProgressSteps,
-      statusEl: fromReferenceStatus,
-      onDone: async (result) => {
-        renderResult(result);
-        await loadHistory();
-        fromReferenceStatus.textContent = "Done.";
-      },
-    });
-  } catch (err) {
-    fromReferenceStatus.textContent = `Error: ${err.message}`;
-    fromReferenceProgress.classList.add("hidden");
-  } finally {
-    fromReferenceBtn.disabled = false;
-  }
-});
-
-loadConfig();
-loadHistory();

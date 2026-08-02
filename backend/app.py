@@ -41,6 +41,8 @@ class RetryTakeRequest(BaseModel):
 class TakesFromReferenceRequest(BaseModel):
     reference_url: str
     motion_prompt: str
+    reference_run_id: str | None = None
+    reference_cost_usd: float | None = None
 
 
 def _load_runs() -> list[dict]:
@@ -51,11 +53,6 @@ def _load_runs() -> list[dict]:
 
 def _save_runs(runs: list[dict]) -> None:
     config.RUNS_INDEX_PATH.write_text(json.dumps(runs, indent=2))
-
-
-@app.get("/api/config")
-def get_config():
-    return {"mock_generation": config.MOCK_GENERATION, "storage_enabled": config.STORAGE_ENABLED}
 
 
 @app.post("/api/upload-reference")
@@ -125,10 +122,15 @@ def generate(req: GenerateRequest):
     return {"job_id": job_id}
 
 
-def _run_takes_from_reference_job(job_id: str, reference_url: str, motion_prompt: str) -> None:
+def _run_takes_from_reference_job(
+    job_id: str, reference_url: str, motion_prompt: str,
+    reference_run_id: str | None, reference_cost_usd: float | None,
+) -> None:
     job = JOBS[job_id]
     try:
-        result = generate_takes_from_reference(reference_url, motion_prompt, progress=job["progress"])
+        result = generate_takes_from_reference(
+            reference_url, motion_prompt, reference_run_id, reference_cost_usd, progress=job["progress"],
+        )
         runs = _load_runs()
         runs.insert(0, result.to_dict())
         _save_runs(runs)
@@ -142,10 +144,16 @@ def _run_takes_from_reference_job(job_id: str, reference_url: str, motion_prompt
 @app.post("/api/generate-takes-from-reference")
 def generate_takes_from_reference_endpoint(req: TakesFromReferenceRequest):
     """Fan out to all 3 video models using a reference image the caller
-    already has, skipping the reference-image generation cost entirely."""
+    already has, skipping the reference-image generation cost entirely.
+    If reference_run_id/reference_cost_usd are supplied (the image came
+    from a real tracked generation, e.g. the "stage the image first" flow),
+    lineage and cost stay accurate instead of using a synthetic run id."""
     if not req.reference_url.strip():
         raise HTTPException(400, "reference_url is required")
-    job_id = _start_job(_run_takes_from_reference_job, (req.reference_url, req.motion_prompt))
+    job_id = _start_job(
+        _run_takes_from_reference_job,
+        (req.reference_url, req.motion_prompt, req.reference_run_id, req.reference_cost_usd),
+    )
     return {"job_id": job_id}
 
 

@@ -4,16 +4,116 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Take Comparison Studio</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f1115'/%3E%3Ccircle cx='16' cy='8' r='4' fill='%235b8cff'/%3E%3Cpath d='M16 12 V16 M16 16 L7 22 M16 16 L16 22 M16 16 L25 22' stroke='%235b8cff' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='7' cy='24' r='3' fill='%233ecf8e'/%3E%3Ccircle cx='16' cy='24' r='3' fill='%233ecf8e'/%3E%3Ccircle cx='25' cy='24' r='3' fill='%233ecf8e'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <div id="toast-container" aria-live="polite"></div>
+
   <header>
-    <h1>Take Comparison Studio</h1>
-    <span id="mode-badge" class="badge">loading…</span>
+    <div class="header-titles">
+      <h1>Take Comparison Studio</h1>
+      <p class="tagline">Generate once, compare across 3 video models, keep full provenance.</p>
+    </div>
+    <div class="header-actions">
+      <button id="history-toggle" class="link-btn">History</button>
+    </div>
   </header>
 
   <main>
-    <section class="panel">
+    <section class="hero panel">
+      <p>Describe a subject once. This app generates a single reference image, then fans it out to <strong>3 different video models</strong> (Kling, Pixverse, Veo), each conditioned on that same image. Compare the takes side by side, pick a favorite, and every asset's provenance is tracked back to that one shared reference.</p>
+      <div class="hero-diagram" aria-hidden="true">
+        <div class="hero-step">Your prompt</div>
+        <span class="hero-arrow">→</span>
+        <div class="hero-step">1 reference image</div>
+        <span class="hero-arrow">→</span>
+        <div class="hero-step">3 video models</div>
+        <span class="hero-arrow">→</span>
+        <div class="hero-step">Compare &amp; pick</div>
+      </div>
+    </section>
+
+    <section id="history-panel" class="panel hidden">
+      <h2>History</h2>
+      <div id="history-list" class="history-list"></div>
+    </section>
+
+    <section id="chooser" class="chooser">
+      <h2>How do you want to start?</h2>
+      <div class="option-cards">
+        <button class="option-card" data-flow="existing">
+          <h3>I already have an image</h3>
+          <p>Upload or link an image and fan out straight to all 3 video models. Cheapest option — no image-generation cost.</p>
+        </button>
+        <button class="option-card" data-flow="staged">
+          <h3>Generate the image first, then decide</h3>
+          <p>Generate just the reference image, look at it, and only pay for the 3 video takes if it looks right.</p>
+        </button>
+        <button class="option-card" data-flow="auto">
+          <h3>Generate everything automatically</h3>
+          <p>One click: image and all 3 video takes run in the background together. Fastest path end to end.</p>
+        </button>
+      </div>
+    </section>
+
+    <!-- Flow: I already have an image -->
+    <section class="tab-panel panel hidden" id="flow-existing">
+      <button class="back-link" data-back>← Choose a different way to start</button>
+      <h2>Use an existing image</h2>
+      <form id="from-reference-form">
+        <label>
+          Upload an image
+          <input type="file" id="existing-reference-file" accept="image/*" />
+        </label>
+        <p class="or-divider">or</p>
+        <label>
+          Paste an image URL <span class="hint">(e.g. copy one from History)</span>
+          <input type="url" id="existing-reference-url" placeholder="https://..." />
+        </label>
+        <label>
+          Motion prompt
+          <textarea id="existing-motion-prompt" rows="2" placeholder="Slow push in, hair moving in the wind" required></textarea>
+        </label>
+        <button type="submit" id="from-reference-btn">Generate 3 takes from this image (~$2.15)</button>
+      </form>
+    </section>
+
+    <!-- Flow: generate image first, then decide -->
+    <section class="tab-panel panel hidden" id="flow-staged">
+      <button class="back-link" data-back>← Choose a different way to start</button>
+      <h2>Generate the reference image first</h2>
+      <form id="staged-reference-form">
+        <label>
+          Subject prompt
+          <textarea id="staged-prompt" rows="2" placeholder="A weathered lighthouse keeper, golden hour, cinematic portrait" required></textarea>
+        </label>
+        <label>
+          Motion prompt <span class="hint">(used later, once you approve the image)</span>
+          <textarea id="staged-motion-prompt" rows="2" placeholder="Slow push in, hair moving in the wind"></textarea>
+        </label>
+        <button type="submit" id="staged-reference-btn">Generate reference image (~$0.035)</button>
+      </form>
+      <div id="staged-progress" class="hidden">
+        <div class="progress-bar-track">
+          <div id="staged-progress-fill" class="progress-bar-fill"></div>
+        </div>
+        <div id="staged-progress-steps" class="progress-steps"></div>
+      </div>
+      <div id="staged-review" class="hidden">
+        <img id="staged-review-image" alt="reference image to review" />
+        <p class="meta" id="staged-review-meta"></p>
+        <div class="button-row">
+          <button type="button" id="staged-regenerate-btn">Not happy — regenerate (~$0.035)</button>
+          <button type="button" id="staged-continue-btn">Looks good — generate 3 takes (~$2.15)</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Flow: generate everything automatically -->
+    <section class="tab-panel panel hidden" id="flow-auto">
+      <button class="back-link" data-back>← Choose a different way to start</button>
+      <h2>Generate everything automatically</h2>
       <form id="generate-form">
         <label>
           Subject prompt
@@ -23,73 +123,33 @@
           Motion prompt <span class="hint">(optional — defaults to subject prompt)</span>
           <textarea id="motion-prompt" rows="2" placeholder="Slow push in, hair moving in the wind"></textarea>
         </label>
-        <div class="button-row">
-          <button type="button" id="test-reference-btn">Test reference image only (~$0.035)</button>
-          <button type="submit" id="generate-btn">Generate reference + 3 takes (~$2.39)</button>
-        </div>
+        <button type="submit" id="generate-btn">Generate reference + 3 takes (~$2.39)</button>
       </form>
-      <p id="status-line" class="status"></p>
-
-      <div id="progress-panel" class="hidden">
-        <div class="progress-bar-track">
-          <div id="progress-bar-fill" class="progress-bar-fill"></div>
-        </div>
-        <div id="progress-steps" class="progress-steps"></div>
-      </div>
-
-      <div id="reference-test-panel" class="hidden">
-        <h3>Reference-only test result</h3>
-        <div id="reference-test-progress" class="hidden">
-          <div class="progress-bar-track">
-            <div id="reference-test-progress-fill" class="progress-bar-fill"></div>
-          </div>
-          <div id="reference-test-progress-steps" class="progress-steps"></div>
-        </div>
-        <img id="reference-test-image" alt="reference test" />
-        <p class="meta" id="reference-test-meta"></p>
-      </div>
     </section>
 
-    <section class="panel">
-      <h2>Already have a reference image?</h2>
-      <p class="hint">Skip paying for a new reference image — fan out straight to all 3 video models using an image URL you already have (e.g. copy one from History below).</p>
-      <form id="from-reference-form">
-        <label>
-          Upload an image
-          <input type="file" id="existing-reference-file" accept="image/*" />
-        </label>
-        <p class="or-divider">or</p>
-        <label>
-          Paste an image URL <span class="hint">(e.g. copy one from History below)</span>
-          <input type="url" id="existing-reference-url" placeholder="https://..." />
-        </label>
-        <label>
-          Motion prompt
-          <textarea id="existing-motion-prompt" rows="2" placeholder="Slow push in, hair moving in the wind" required></textarea>
-        </label>
-        <button type="submit" id="from-reference-btn">Generate 3 takes from this image (~$2.15)</button>
-      </form>
-      <p id="from-reference-status" class="status"></p>
-      <div id="from-reference-progress" class="hidden">
-        <div class="progress-bar-track">
-          <div id="from-reference-progress-fill" class="progress-bar-fill"></div>
-        </div>
-        <div id="from-reference-progress-steps" class="progress-steps"></div>
+    <div id="progress-panel" class="panel hidden">
+      <h3>In progress</h3>
+      <div class="progress-bar-track">
+        <div id="progress-bar-fill" class="progress-bar-fill"></div>
       </div>
-    </section>
+      <div id="progress-steps" class="progress-steps"></div>
+    </div>
 
     <section id="result-panel" class="panel hidden">
-      <h2>Reference image</h2>
-      <img id="reference-image" alt="reference" />
-      <p class="meta" id="reference-meta"></p>
-
-      <h2>Takes</h2>
-      <div id="takes-grid" class="takes-grid"></div>
-    </section>
-
-    <section class="panel">
-      <h2>History</h2>
-      <div id="history-list" class="history-list"></div>
+      <h2>Result</h2>
+      <div class="lineage">
+        <div class="lineage-source">
+          <img id="reference-image" alt="reference" />
+          <p class="lineage-label">Reference image</p>
+          <p class="meta" id="reference-meta"></p>
+        </div>
+        <div class="lineage-connector" aria-hidden="true">
+          <svg viewBox="0 0 300 60" preserveAspectRatio="none">
+            <path d="M150,0 L150,20 M150,20 L30,58 M150,20 L150,58 M150,20 L270,58" />
+          </svg>
+        </div>
+        <div id="takes-grid" class="takes-grid"></div>
+      </div>
     </section>
   </main>
 
