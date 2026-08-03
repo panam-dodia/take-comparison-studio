@@ -73,6 +73,7 @@ function renderTake(take, run) {
       ${take.cost_usd != null ? `cost: $${take.cost_usd.toFixed(3)}<br/>` : ""}
       ${take.duration_sec != null ? `gen time: ${take.duration_sec.toFixed(1)}s<br/>` : ""}
       run: ${take.run_id || "n/a"}
+      ${take.manifest_uri ? `<br/><a href="${take.manifest_uri}" target="_blank" rel="noopener">view manifest</a>` : ""}
       ${take.error ? `<br/><span style="color:#ff6b6b">${take.error}</span>` : ""}
     </div>
     ${take.status === "failed" ? '<button class="retry-btn">Retry this model only</button>' : ""}
@@ -130,7 +131,10 @@ function renderResult(run) {
   referenceImage.onerror = () => { referenceImage.style.visibility = "hidden"; };
   referenceImage.src = run.reference_url || "";
   const refCost = run.reference_cost_usd != null ? ` · cost: $${run.reference_cost_usd.toFixed(3)}` : "";
-  referenceMeta.textContent = `run: ${run.parent_run_id} · prompt: "${run.prompt}"${refCost}`;
+  const refManifest = run.reference_manifest_uri
+    ? ` · <a href="${run.reference_manifest_uri}" target="_blank" rel="noopener">view manifest</a>`
+    : "";
+  referenceMeta.innerHTML = `run: ${run.parent_run_id} · prompt: "${run.prompt}"${refCost}${refManifest}`;
 
   takesGrid.innerHTML = "";
   for (const take of run.takes) {

@@ -452,6 +452,15 @@ button:disabled {
   font-size: 0.8rem;
 }
 
+.meta a, .take-meta a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.meta a:hover, .take-meta a:hover {
+  text-decoration: underline;
+}
+
 .lineage {
   display: flex;
   flex-direction: column;
