@@ -111,7 +111,14 @@ function renderTake(take, run) {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "retry failed");
-        renderResult(data);
+        // Merge into the run already showing (client-side), rather than
+        // trusting the server's returned run wholesale — if the original
+        // run wasn't found in the server's local history (e.g. wiped by a
+        // redeploy), it returns a minimal run with only this one take,
+        // which would otherwise make the other takes disappear.
+        const updatedTake = data.takes.find((t) => t.key === take.key) || data.takes[0];
+        const mergedTakes = run.takes.map((t) => (t.key === take.key ? updatedTake : t));
+        renderResult({ ...run, takes: mergedTakes, favorite_key: data.favorite_key ?? run.favorite_key });
         await loadHistory();
         showToast("Retry done.", "success");
       } catch (err) {

@@ -252,7 +252,12 @@ def _pixverse_direct_generate(prompt: str, image_url: str, duration: int, aspect
             status_data = status_resp.json()
             status = status_data.get("status")
             if status == "success":
-                video_url = status_data["outcome"]["video_url"]
+                outcome = status_data.get("outcome") or {}
+                video_url = outcome.get("video_url")
+                if not video_url:
+                    raise RuntimeError(
+                        f"success response had no outcome.video_url for request_id={request_id} — full response: {status_data}"
+                    )
                 video_resp = client.get(video_url)
                 video_resp.raise_for_status()
                 return video_resp.content, status_data
