@@ -78,7 +78,14 @@ VIDEO_MODELS = [
         # wan2.7-r2v (generic "please try again later") failed on GMI
         # Cloud's own side (confirmed via their Playground UI, not our
         # code) — see DEVLOG.md.
+        # GMI's actual REST API for this model (confirmed via their own API
+        # docs) wants an explicit string "image_url" field, not the generic
+        # "image" chain-input slot genblaze's route_images() populates, and
+        # "duration" as a STRING enum ("5"), not an integer — both handled
+        # as a special case in _run_take. duration stays an int here since
+        # our own cost math needs to multiply by it.
         "params": {"duration": 5, "aspect_ratio": "16:9", "quality": "540p"},
+        "needs_explicit_image_url": True,
     },
     {
         "key": "veo", "label": "Veo 3.1 Fast",
@@ -207,6 +214,11 @@ def _run_take(spec: dict, ref_result, ref_asset, motion_prompt: str, sink, progr
         progress["takes"][spec["key"]].update(status="processing", started_at=time.time())
 
     run_name = f"take-{spec['key']}-{uuid.uuid4().hex[:8]}"
+    step_kwargs = dict(spec["params"])
+    if spec.get("needs_explicit_image_url"):
+        step_kwargs["image_url"] = ref_asset.url
+        step_kwargs["duration"] = str(step_kwargs["duration"])
+
     try:
         take_result = (
             Pipeline(run_name, project_id=PROJECT_ID)
@@ -217,7 +229,7 @@ def _run_take(spec: dict, ref_result, ref_asset, motion_prompt: str, sink, progr
                 prompt=motion_prompt,
                 modality=Modality.VIDEO,
                 external_inputs=[ref_asset],
-                **spec["params"],
+                **step_kwargs,
             )
             .run(sink=sink, timeout=600)
         )
