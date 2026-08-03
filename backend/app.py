@@ -219,6 +219,32 @@ def retry_take_endpoint(parent_run_id: str, req: RetryTakeRequest):
     return new_run
 
 
+class ReconstructRunRequest(BaseModel):
+    """One-off recovery tool — saves a fully-formed run directly into local
+    history with NO real API calls, for re-recording provenance of results
+    that are already real and already durably stored in B2, but got lost
+    from runs_index.json because a redeploy wiped local disk mid-iteration.
+    Not part of the normal generation flow."""
+    parent_run_id: str
+    reference_url: str
+    reference_manifest_uri: str | None = None
+    prompt: str
+    motion_prompt: str
+    reference_cost_usd: float | None = None
+    takes: list[dict]
+    favorite_key: str | None = None
+
+
+@app.post("/api/runs/reconstruct")
+def reconstruct_run_endpoint(req: ReconstructRunRequest):
+    runs = _load_runs()
+    runs = [r for r in runs if r["parent_run_id"] != req.parent_run_id]
+    run = req.model_dump()
+    runs.insert(0, run)
+    _save_runs(runs)
+    return run
+
+
 @app.post("/api/runs/{parent_run_id}/favorite")
 def set_favorite(parent_run_id: str, req: FavoriteRequest):
     runs = _load_runs()
