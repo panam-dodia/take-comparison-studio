@@ -8,6 +8,7 @@ provenance manifest for each take traces to a common anchor.
 from __future__ import annotations
 
 import hashlib
+import json
 import mimetypes
 import tempfile
 import time
@@ -16,10 +17,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+import httpx
 from genblaze_core import Asset, Modality, Pipeline
 
 from . import config
-from .storage import build_sink
+from .storage import build_sink, upload_user_reference
 
 if config.MOCK_GENERATION:
     from genblaze_core import MockProvider, MockVideoProvider
@@ -78,14 +80,17 @@ VIDEO_MODELS = [
         # wan2.7-r2v (generic "please try again later") failed on GMI
         # Cloud's own side (confirmed via their Playground UI, not our
         # code) — see DEVLOG.md.
-        # GMI's actual REST API for this model (confirmed via their own API
-        # docs) wants an explicit string "image_url" field, not the generic
-        # "image" chain-input slot genblaze's route_images() populates, and
-        # "duration" as a STRING enum ("5"), not an integer — both handled
-        # as a special case in _run_take. duration stays an int here since
-        # our own cost math needs to multiply by it.
+        # GMI's real API wants "image_url" as an explicit string field (not
+        # genblaze's generic "image" chain-input slot) and "duration" as a
+        # STRING enum ("5"), not an int. genblaze's own Pixverse connector
+        # forces duration back to an int via IntSchema + _coerce_whole_seconds
+        # no matter what we pass — a genblaze SDK bug, confirmed by comparing
+        # against GMI's own published API docs. So in REAL mode this model
+        # bypasses genblaze's Pipeline entirely (see _run_pixverse_direct)
+        # and calls GMI Cloud's REST API directly instead. Mock mode is
+        # unaffected — it still goes through the normal genblaze mock path.
         "params": {"duration": 5, "aspect_ratio": "16:9", "quality": "540p"},
-        "needs_explicit_image_url": True,
+        "direct_gmi_call": True,
     },
     {
         "key": "veo", "label": "Veo 3.1 Fast",
@@ -209,16 +214,133 @@ def generate_reference_only(prompt: str, progress: dict | None = None) -> Refere
     return result
 
 
+GMI_BASE_URL = "https://console.gmicloud.ai"
+
+
+def _pixverse_direct_generate(prompt: str, image_url: str, duration: int, aspect_ratio: str, quality: str) -> tuple[bytes, dict]:
+    """Calls GMI Cloud's REST API directly for Pixverse, bypassing
+    genblaze's Pipeline entirely — see the comment on the "pixverse" entry
+    in VIDEO_MODELS for why. Returns (video_bytes, raw_status_response)."""
+    if not config.GMI_API_KEY:
+        raise RuntimeError("GMI_API_KEY is not configured")
+
+    headers = {"Authorization": f"Bearer {config.GMI_API_KEY}", "Content-Type": "application/json"}
+    body = {
+        "model": "pixverse-v5.6-i2v",
+        "payload": {
+            "image_url": image_url,
+            "prompt": prompt,
+            "duration": str(duration),
+            "aspect_ratio": aspect_ratio,
+            "quality": quality,
+        },
+    }
+
+    with httpx.Client(timeout=30) as client:
+        submit_resp = client.post(f"{GMI_BASE_URL}/api/v1/ie/requestqueue/apikey/requests", json=body, headers=headers)
+        submit_resp.raise_for_status()
+        submit_data = submit_resp.json()
+        request_id = submit_data.get("request_id") or submit_data.get("id")
+        if not request_id:
+            raise RuntimeError(f"GMI Cloud submit response had no request_id: {submit_data}")
+
+        deadline = time.time() + 600
+        status_data: dict = {}
+        while time.time() < deadline:
+            status_resp = client.get(f"{GMI_BASE_URL}/api/v1/ie/requestqueue/apikey/requests/{request_id}", headers=headers)
+            status_resp.raise_for_status()
+            status_data = status_resp.json()
+            status = status_data.get("status")
+            if status == "success":
+                video_url = status_data["outcome"]["video_url"]
+                video_resp = client.get(video_url)
+                video_resp.raise_for_status()
+                return video_resp.content, status_data
+            if status in ("failed", "cancelled"):
+                raise RuntimeError(f"GMI Cloud request {status}: {status_data}")
+            time.sleep(4)
+
+    raise TimeoutError(f"GMI Cloud request timed out after 600s; last status: {status_data}")
+
+
+def _run_pixverse_direct(spec: dict, ref_asset, motion_prompt: str) -> TakeResult:
+    """Real GMI Cloud call for Pixverse via direct HTTP (see
+    _pixverse_direct_generate). Since this bypasses genblaze's Pipeline,
+    there's no genblaze-native manifest for this step — a lightweight
+    manifest is built and uploaded to B2 by hand instead, so provenance
+    still lands durably even without genblaze's tooling wrapping this call.
+    """
+    duration = spec["params"]["duration"]
+    started_at = time.time()
+    run_id = f"pixverse-direct-{uuid.uuid4().hex[:8]}"
+
+    try:
+        video_bytes, raw_status = _pixverse_direct_generate(
+            prompt=motion_prompt,
+            image_url=ref_asset.url,
+            duration=duration,
+            aspect_ratio=spec["params"].get("aspect_ratio", "16:9"),
+            quality=spec["params"].get("quality", "540p"),
+        )
+    except Exception as exc:
+        return TakeResult(
+            key=spec["key"], label=spec["label"], model=spec["model"],
+            status="failed", url=None, cost_usd=None, duration_sec=None,
+            run_id=run_id, manifest_uri=None, error=str(exc),
+        )
+
+    completed_at = time.time()
+    video_url = raw_status.get("outcome", {}).get("video_url")
+    manifest_uri = None
+    try:
+        video_url = upload_user_reference(video_bytes, f"{run_id}.mp4", "video/mp4")
+        manifest = {
+            "run_id": run_id,
+            "model": spec["model"],
+            "provider": "gmicloud-direct",
+            "prompt": motion_prompt,
+            "duration_requested": duration,
+            "reference_image_url": ref_asset.url,
+            "video_url": video_url,
+            "gmi_raw_status": raw_status,
+            "note": (
+                "Generated via a direct GMI Cloud API call, bypassing genblaze's "
+                "Pipeline — its Pixverse connector forces `duration` to an int, "
+                "which GMI Cloud's real API rejects (it requires a string enum). "
+                "See DEVLOG.md."
+            ),
+        }
+        manifest_uri = upload_user_reference(
+            json.dumps(manifest, indent=2).encode("utf-8"), f"{run_id}-manifest.json", "application/json",
+        )
+    except Exception:
+        pass  # keep the raw GMI-hosted video URL as a fallback if the B2 upload has an issue
+
+    return TakeResult(
+        key=spec["key"],
+        label=spec["label"],
+        model=spec["model"],
+        status="succeeded",
+        url=video_url,
+        cost_usd=_estimate_cost(spec["model"], duration),
+        duration_sec=completed_at - started_at,
+        run_id=run_id,
+        manifest_uri=manifest_uri,
+        error=None,
+    )
+
+
 def _run_take(spec: dict, ref_result, ref_asset, motion_prompt: str, sink, progress: dict | None = None) -> TakeResult:
     if progress is not None:
         progress["takes"][spec["key"]].update(status="processing", started_at=time.time())
 
-    run_name = f"take-{spec['key']}-{uuid.uuid4().hex[:8]}"
-    step_kwargs = dict(spec["params"])
-    if spec.get("needs_explicit_image_url"):
-        step_kwargs["image_url"] = ref_asset.url
-        step_kwargs["duration"] = str(step_kwargs["duration"])
+    if spec.get("direct_gmi_call") and not config.MOCK_GENERATION:
+        result = _run_pixverse_direct(spec, ref_asset, motion_prompt)
+        if progress is not None:
+            progress["takes"][spec["key"]].update(status=result.status, completed_at=time.time())
+        return result
 
+    run_name = f"take-{spec['key']}-{uuid.uuid4().hex[:8]}"
     try:
         take_result = (
             Pipeline(run_name, project_id=PROJECT_ID)
@@ -229,7 +351,7 @@ def _run_take(spec: dict, ref_result, ref_asset, motion_prompt: str, sink, progr
                 prompt=motion_prompt,
                 modality=Modality.VIDEO,
                 external_inputs=[ref_asset],
-                **step_kwargs,
+                **spec["params"],
             )
             .run(sink=sink, timeout=600)
         )

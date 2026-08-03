@@ -14,4 +14,6 @@ B2_REGION = os.getenv("B2_REGION", "us-west-004")
 
 STORAGE_ENABLED = bool(B2_BUCKET and B2_KEY_ID and B2_APP_KEY)
 
+GMI_API_KEY = os.getenv("GMI_API_KEY") or None
+
 RUNS_INDEX_PATH = Path(__file__).resolve().parent.parent / "runs_index.json"

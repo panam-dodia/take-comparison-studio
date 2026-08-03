@@ -194,9 +194,29 @@ def retry_take_endpoint(parent_run_id: str, req: RetryTakeRequest):
                 if t["key"] == req.model_key:
                     run["takes"][i] = result.to_dict()
                     break
+            else:
+                run["takes"].append(result.to_dict())
             _save_runs(runs)
             return run
-    raise HTTPException(404, "run not found")
+
+    # Parent run isn't in local history — e.g. it was wiped by a redeploy
+    # since the run was originally generated (runs_index.json is local disk,
+    # not persisted). The real API call above already happened regardless,
+    # so save a new minimal entry instead of 404ing and discarding a result
+    # that may have actually succeeded and cost real money.
+    new_run = {
+        "parent_run_id": req.reference_run_id,
+        "reference_url": req.reference_url,
+        "reference_manifest_uri": None,
+        "prompt": req.motion_prompt,
+        "motion_prompt": req.motion_prompt,
+        "reference_cost_usd": None,
+        "takes": [result.to_dict()],
+        "favorite_key": None,
+    }
+    runs.insert(0, new_run)
+    _save_runs(runs)
+    return new_run
 
 
 @app.post("/api/runs/{parent_run_id}/favorite")
