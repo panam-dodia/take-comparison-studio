@@ -3,10 +3,20 @@
 ## What this app does
 1. User enters a text prompt describing a subject/character.
 2. App generates ONE reference image from that prompt (this becomes the "anchor" for consistency).
-3. App fans out from that same reference image to 3 different video models (all within GMI Cloud, to control cost) — Kling, Seedance, and Veo3 — generating short video "takes."
+3. App fans out from that same reference image to 3 different video models (all within GMI Cloud, to control cost) — Kling, Pixverse, and Veo — generating short video "takes."
 4. All takes are displayed side-by-side in a simple UI; the user picks their favorite.
 5. Every asset (reference image + all video takes) and its provenance manifest is stored in Backblaze B2, linked via `parent_run_id` so every take traces back to the same reference.
 6. History/lineage view: user can see which take came from which model, with cost and generation time per take.
+
+## Three ways to start (built in the frontend)
+1. **I already have an image** — upload a file or paste an existing image URL, fan out straight to all 3 video models, skipping the reference-image generation cost entirely.
+2. **Generate the image first, then decide** — generates just the reference image, shows it for review, and only fans out to video (with accurate lineage back to that real generation) if you approve it. Lets you bail out and regenerate the image cheaply instead of committing to a bad reference image.
+3. **Generate everything automatically** — one click, reference image and all 3 takes run as one background job.
+
+All three report live per-step progress (with real elapsed time, not a fake percentage) via a polling job API, since generation time varies wildly between providers (25s to ~5 min observed for the same model).
+
+## Live deployment
+Deployed on Render (free tier) at the URL in `README.md`. Runs in **real** (non-mock) mode — judges clicking Generate will spend real GMI Cloud budget, which is an accepted tradeoff (see git history / conversation for reasoning). `runs_index.json` is local-disk and not persisted across redeploys — an empty History tab after a redeploy is expected, not a bug.
 
 ## Why this matters (for judging narrative)
 - Solves a real, documented pain point: AI video generation is unpredictable, and creators currently generate multiple takes manually and compare by hand — this formalizes that workflow.
@@ -20,8 +30,9 @@
 
 ## Tech stack
 - Backend: Python 3.11+, FastAPI (Genblaze is Python-only)
-- Frontend: plain HTML/JS, served as static files by the same FastAPI app (avoids CORS entirely) — kept minimal, this is a hackathon, not production polish
+- Frontend: plain HTML/JS/CSS, served as static files by the same FastAPI app (avoids CORS entirely) — no framework, but has had a real visual design pass (not just unstyled hackathon defaults)
 - Storage: Backblaze B2 (S3-compatible), via `genblaze-s3`
+- Deployment: Render (free web service tier)
 
 ## Install
 ```
@@ -34,7 +45,7 @@ GENBLAZE_MOCK=true          # false to hit real GMI Cloud + spend budget
 B2_KEY_ID=...
 B2_APP_KEY=...
 B2_BUCKET=...
-B2_REGION=us-west-004       # match your bucket's actual region
+B2_REGION=us-east-005       # match your bucket's actual region
 GMI_API_KEY=...             # only required when GENBLAZE_MOCK=false
 ```
 Storage is optional in mock mode: if B2 credentials are absent, the pipeline runs without a `sink` (no upload), which is useful for pure offline iteration before a bucket is wired up.
@@ -104,14 +115,15 @@ genblaze index manifest.json -o ./   # index into Parquet — nice follow-up for
 
 ## Build order
 1. Scaffold project structure (backend + minimal frontend) — done
-2. Confirm B2 storage connection + manifest creation works, in mock generation mode
-3. Fan-out pipeline logic (reference image → 3 linked video takes) — done, mock-mode by default
-4. Side-by-side comparison UI + "pick favorite" + lineage/history view
-5. Only once everything above works end-to-end on mock data: set `GENBLAZE_MOCK=false`, add a real `GMI_API_KEY`, and run the actual paid generations needed for the demo
-6. Record the ~3 min demo video
+2. Confirm B2 storage connection + manifest creation works, in mock generation mode — done
+3. Fan-out pipeline logic (reference image → 3 linked video takes) — done
+4. Side-by-side comparison UI + "pick favorite" + lineage/history view — done, plus 3 entry-point flows, cost tracking, live progress polling
+5. Real `GMI_API_KEY` + B2 credentials wired up, real generations made — done (Kling, Pixverse, Veo all confirmed working against the live reference image pipeline)
+6. Deployed live on Render — done
+7. Record the ~3 min demo video — not yet done
+8. Fill out and submit the actual Devpost project page — not yet done
 
-## Still to confirm before step 5 (real spend)
-- ~~Exact GMI Cloud video model IDs currently live in the console~~ — confirmed, see "Verified live" above.
-- ~~Whether Seedance-2.0 and Veo3 support image-conditioned generation~~ — confirmed yes for both (using `veo-3.1-fast-generate-001`, not the stale `Veo3`).
-- ~~Current per-second video pricing~~ — confirmed, ≈$2.39/run.
-- Still open: `.env` has no real `GMI_API_KEY` / B2 credentials yet, and no real (non-mock) call has been made. First real run should be one small test before the full demo batch.
+## Known real-spend findings (from actual paid runs)
+- One full comparison run (image + 3 takes) costs ≈$2.19 at minimum viable durations.
+- `seedance-2-0-260128` and `wan2.7-r2v` were both tried as the third model and both failed reproducibly on GMI Cloud's own backend (confirmed via their own Playground UI, not a bug on our side) — see "Verified live" above for the swap history. `pixverse-v5.6-i2v` is the current, working third model.
+- Failed generation attempts do not appear to incur further cost beyond what's already billed at submission time, based on observed credit balances across several failed retries — not a guarantee from GMI Cloud, just an observation.

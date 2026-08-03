@@ -27,7 +27,7 @@ if config.MOCK_GENERATION:
     # MockProvider/MockVideoProvider default to a fake https://mock.test/...
     # URL, which a *real* B2 sink can't fetch (DNS fails). Point them at a
     # real local file instead so B2 upload + manifest creation can still be
-    # exercised for free — see CLAUDE.md.
+    # exercised for free — see DEVLOG.md.
     _MOCK_ASSET_DIR = Path(tempfile.gettempdir()) / "genblaze-mock-assets"
     _MOCK_ASSET_DIR.mkdir(exist_ok=True)
 
@@ -77,7 +77,7 @@ VIDEO_MODELS = [
         # swapped in after BOTH seedance-2-0-260128 (Backend error 400) and
         # wan2.7-r2v (generic "please try again later") failed on GMI
         # Cloud's own side (confirmed via their Playground UI, not our
-        # code) — see CLAUDE.md.
+        # code) — see DEVLOG.md.
         "params": {"duration": 5, "aspect_ratio": "16:9", "quality": "540p"},
     },
     {
@@ -93,7 +93,7 @@ PROJECT_ID = "take-comparison-studio"
 # genblaze only populates step.cost_usd when a pricing strategy is
 # registered with it, which we haven't done — so this fills the gap using
 # the rates verified live against console.gmicloud.ai on 2026-07-27 (see
-# CLAUDE.md). Re-check these before trusting cost figures on a later run.
+# DEVLOG.md). Re-check these before trusting cost figures on a later run.
 PRICING = {
     "seedream-5.0-lite": {"kind": "flat", "rate": 0.035},
     "Kling-Image2Video-V2.1-Master": {"kind": "per_second", "rate": 0.28},
@@ -271,7 +271,7 @@ def _external_image_asset(reference_url: str) -> Asset:
     an Asset for external_inputs. Forces an image/* media type regardless
     of what mimetypes guesses — it maps unfamiliar extensions to
     application/octet-stream, not None, which would make route_images()
-    silently drop the asset (see CLAUDE.md)."""
+    silently drop the asset (see DEVLOG.md)."""
     guessed = mimetypes.guess_type(reference_url)[0]
     media_type = guessed if guessed and guessed.startswith("image/") else "image/jpeg"
     return Asset(url=reference_url, media_type=media_type, sha256="0" * 64)
