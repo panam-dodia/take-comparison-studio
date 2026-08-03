@@ -253,10 +253,14 @@ def _pixverse_direct_generate(prompt: str, image_url: str, duration: int, aspect
             status = status_data.get("status")
             if status == "success":
                 outcome = status_data.get("outcome") or {}
-                video_url = outcome.get("video_url")
+                # GMI's own docs claim outcome.video_url, but the real live
+                # response instead nests it as outcome.media_urls[0].url —
+                # confirmed against an actual successful response. Try both.
+                media_urls = outcome.get("media_urls") or []
+                video_url = outcome.get("video_url") or (media_urls[0].get("url") if media_urls else None)
                 if not video_url:
                     raise RuntimeError(
-                        f"success response had no outcome.video_url for request_id={request_id} — full response: {status_data}"
+                        f"success response had no recognizable video URL for request_id={request_id} — full response: {status_data}"
                     )
                 video_resp = client.get(video_url)
                 video_resp.raise_for_status()
